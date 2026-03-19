@@ -127,7 +127,7 @@ curl "http://localhost:8080/save?url=https://httpbin.org/html"
 
 ## 许可证
 
-MIT License
+AGPL-3.0 License
 
 ## 贡献
 
