@@ -8,7 +8,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
-    process::Command,
     fs,
     path::Path as StdPath,
     time::{SystemTime, UNIX_EPOCH},
@@ -16,6 +15,13 @@ use std::{
 };
 use std::net::SocketAddr;
 use tokio::time::{sleep, Duration};
+
+mod reap;
+
+use reap::ChildExit;
+
+/// single-file 抓取单个页面的超时上限，超过则整组 kill。
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Deserialize)]
 struct SaveParams {
@@ -270,14 +276,23 @@ async fn process_single_task(task_id: &str, url: &str, state: Arc<AppState>) {
 
     println!("Processing task {}: {}", task_id, url);
 
-    let output = Command::new("single-file")
-        .arg(url)
-        .arg(&output_file)
-        .output();
+    let url_arg = url.to_string();
+    let file_arg = output_file.clone();
+    // 抓取单个页面可能耗时数十秒，放到阻塞线程池，避免占住 tokio worker
+    let captured = tokio::task::spawn_blocking(move || {
+        reap::run_capture(
+            "single-file",
+            &[url_arg.as_str(), file_arg.as_str()],
+            CAPTURE_TIMEOUT,
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(std::io::Error::other(e.to_string())));
 
-    match output {
+    match captured {
         Ok(result) => {
-            if result.status.success() && StdPath::new(&output_file).exists() {
+            let succeeded = result.exit == ChildExit::Code(0) && StdPath::new(&output_file).exists();
+            if succeeded {
                 // 成功完成
                 {
                     let mut statuses = state.task_statuses.lock().unwrap();
@@ -341,6 +356,9 @@ async fn cleanup_old_files(state: Arc<AppState>) {
 
 #[tokio::main]
 async fn main() {
+    // 必须在派生任何子进程之前启动，否则会漏掉先退出的进程
+    reap::spawn_reaper();
+
     let state = Arc::new(AppState {
         cache: Arc::new(Mutex::new(HashMap::new())),
         task_queue: Arc::new(Mutex::new(VecDeque::new())),

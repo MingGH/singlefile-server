@@ -1,0 +1,53 @@
+name: Deploy
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - 'k3s-deployment-prod.yaml'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log in to Ali Container
+        run: |
+          docker login --username=${{ secrets.ALI_CONTAINER_USER }} --password="${{ secrets.ALI_CONTAINER_PWD }}" registry.cn-hongkong.aliyuncs.com
+      - name: Build image
+        run: |
+          docker build -t registry.cn-hongkong.aliyuncs.com/runnable-run/singlefile-server:latest .
+      - name: Push Docker image to Ali Container
+        run: |
+          docker push registry.cn-hongkong.aliyuncs.com/runnable-run/singlefile-server:latest
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up kubectl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y kubectl
+      - name: Set up KUBE_CONFIG
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" > K3S_KUBE_CONFIG.yaml
+          chmod 600 K3S_KUBE_CONFIG.yaml
+      - name: Deploy to K3s
+        run: |
+          kubectl --kubeconfig=K3S_KUBE_CONFIG.yaml apply -f k3s-deployment-prod.yaml
+          kubectl --kubeconfig=K3S_KUBE_CONFIG.yaml patch deployment singlefile-server-deployment -n 996ninja -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"date\":\"`date +'%s'`\"}}}}}"
+      - name: Notify Discord
+        if: success()
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"content\": \"✅ **singlefile-server 部署成功！**\n\n📦 提交: \`${{ github.sha }}\`\n👤 提交者: ${{ github.actor }}\n📝 消息: ${{ github.event.head_commit.message }}\"}" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}

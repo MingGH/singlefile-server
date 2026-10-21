@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations: {}
+  name: singlefile-server-deployment
+  namespace: 996ninja
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: singlefile-server
+  template:
+    metadata:
+      labels:
+        app: singlefile-server
+    spec:
+      containers:
+      - image: registry.cn-hongkong.aliyuncs.com/runnable-run/singlefile-server:latest
+        imagePullPolicy: Always
+        name: singlefile-server
+        ports:
+        - containerPort: 8080
+        resources:
+          limits:
+            memory: 2Gi
+          requests:
+            memory: 512Mi
